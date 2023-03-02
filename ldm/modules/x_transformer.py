@@ -91,7 +91,7 @@ def pick_and_pop(keys, d):
 
 
 def group_dict_by_key(cond, d):
-    return_val = [dict(), dict()]
+    return_val = [{}, {}]
     for key in d.keys():
         match = bool(cond(key))
         ind = int(not match)
@@ -196,10 +196,11 @@ class FeedForward(nn.Module):
         super().__init__()
         inner_dim = int(dim * mult)
         dim_out = default(dim_out, dim)
-        project_in = nn.Sequential(
-            nn.Linear(dim, inner_dim),
-            nn.GELU()
-        ) if not glu else GEGLU(dim, inner_dim)
+        project_in = (
+            GEGLU(dim, inner_dim)
+            if glu
+            else nn.Sequential(nn.Linear(dim, inner_dim), nn.GELU())
+        )
 
         self.net = nn.Sequential(
             project_in,
@@ -423,7 +424,7 @@ class AttentionLayers(nn.Module):
 
         if cross_attend and not only_cross:
             default_block = ('a', 'c', 'f')
-        elif cross_attend and only_cross:
+        elif cross_attend:
             default_block = ('c', 'f')
         else:
             default_block = ('a', 'f')
@@ -460,18 +461,14 @@ class AttentionLayers(nn.Module):
                 layer = Attention(dim, heads=heads, **attn_kwargs)
             elif layer_type == 'f':
                 layer = FeedForward(dim, **ff_kwargs)
-                layer = layer if not macaron else Scale(0.5, layer)
+                layer = Scale(0.5, layer) if macaron else layer
             else:
                 raise Exception(f'invalid layer type {layer_type}')
 
             if isinstance(layer, Attention) and exists(branch_fn):
                 layer = branch_fn(layer)
 
-            if gate_residual:
-                residual_fn = GRUGating(dim)
-            else:
-                residual_fn = Residual()
-
+            residual_fn = GRUGating(dim) if gate_residual else Residual()
             self.layers.append(nn.ModuleList([
                 norm_fn(),
                 layer,
@@ -580,7 +577,11 @@ class TransformerWrapper(nn.Module):
 
         self.init_()
 
-        self.to_logits = nn.Linear(dim, num_tokens) if not tie_embedding else lambda t: t @ self.token_emb.weight.t()
+        self.to_logits = (
+            (lambda t: t @ self.token_emb.weight.t())
+            if tie_embedding
+            else nn.Linear(dim, num_tokens)
+        )
 
         # memory tokens (like [cls]) from Memory Transformers paper
         num_memory_tokens = default(num_memory_tokens, 0)

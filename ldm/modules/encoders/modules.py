@@ -29,8 +29,7 @@ class ClassEmbedder(nn.Module):
             key = self.key
         # this is for use in crossattn
         c = batch[key][:, None]
-        c = self.embedding(c)
-        return c
+        return self.embedding(c)
 
 
 class TransformerEmbedder(AbstractEncoder):
@@ -43,8 +42,7 @@ class TransformerEmbedder(AbstractEncoder):
 
     def forward(self, tokens):
         tokens = tokens.to(self.device)  # meh
-        z = self.transformer(tokens, return_embeddings=True)
-        return z
+        return self.transformer(tokens, return_embeddings=True)
 
     def encode(self, x):
         return self(x)
@@ -63,15 +61,12 @@ class BERTTokenizer(AbstractEncoder):
     def forward(self, text):
         batch_encoding = self.tokenizer(text, truncation=True, max_length=self.max_length, return_length=True,
                                         return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
-        tokens = batch_encoding["input_ids"].to(self.device)
-        return tokens
+        return batch_encoding["input_ids"].to(self.device)
 
     @torch.no_grad()
     def encode(self, text):
         tokens = self(text)
-        if not self.vq_interface:
-            return tokens
-        return None, None, [None, None, tokens]
+        return (None, None, [None, None, tokens]) if self.vq_interface else tokens
 
     def decode(self, text):
         return text
@@ -91,12 +86,8 @@ class BERTEmbedder(AbstractEncoder):
                                               emb_dropout=embedding_dropout)
 
     def forward(self, text):
-        if self.use_tknz_fn:
-            tokens = self.tknz_fn(text)#.to(self.device)
-        else:
-            tokens = text
-        z = self.transformer(tokens, return_embeddings=True)
-        return z
+        tokens = self.tknz_fn(text) if self.use_tknz_fn else text
+        return self.transformer(tokens, return_embeddings=True)
 
     def encode(self, text):
         # output of length 77
@@ -123,7 +114,7 @@ class SpatialRescaler(nn.Module):
             self.channel_mapper = nn.Conv2d(in_channels,out_channels,1,bias=bias)
 
     def forward(self,x):
-        for stage in range(self.n_stages):
+        for _ in range(self.n_stages):
             x = self.interpolator(x, scale_factor=self.multiplier)
 
 
@@ -155,8 +146,7 @@ class FrozenCLIPEmbedder(AbstractEncoder):
         tokens = batch_encoding["input_ids"].to(self.device)
         outputs = self.transformer(input_ids=tokens)
 
-        z = outputs.last_hidden_state
-        return z
+        return outputs.last_hidden_state
 
     def encode(self, text):
         return self(text)
@@ -219,9 +209,7 @@ class FrozenClipImageEmbedder(nn.Module):
                                    interpolation='bicubic',align_corners=True,
                                    antialias=self.antialias)
         x = (x + 1.) / 2.
-        # renormalize according to clip
-        x = kornia.enhance.normalize(x, self.mean, self.std)
-        return x
+        return kornia.enhance.normalize(x, self.mean, self.std)
 
     def forward(self, x):
         # x is assumed to be in range [-1,1]

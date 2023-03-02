@@ -175,58 +175,49 @@ class FirstStage(DDPM):
 
         z = 1. / self.scale_factor * z
 
-        if hasattr(self, "split_input_params"):
-            if isinstance(self.first_stage_model, VQModelInterface):
-                return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
-            else:
-                return self.first_stage_model.decode(z)
-
+        if isinstance(self.first_stage_model, VQModelInterface):
+            return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
         else:
-            if isinstance(self.first_stage_model, VQModelInterface):
-                return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
-            else:
-                return self.first_stage_model.decode(z)
+            return self.first_stage_model.decode(z)
 
 
     @torch.no_grad()
     def encode_first_stage(self, x):
-        if hasattr(self, "split_input_params"):
-            if self.split_input_params["patch_distributed_vq"]:
-                ks = self.split_input_params["ks"]  # eg. (128, 128)
-                stride = self.split_input_params["stride"]  # eg. (64, 64)
-                df = self.split_input_params["vqf"]
-                self.split_input_params['original_image_size'] = x.shape[-2:]
-                bs, nc, h, w = x.shape
-                if ks[0] > h or ks[1] > w:
-                    ks = (min(ks[0], h), min(ks[1], w))
-                    print("reducing Kernel")
-
-                if stride[0] > h or stride[1] > w:
-                    stride = (min(stride[0], h), min(stride[1], w))
-                    print("reducing stride")
-
-                fold, unfold, normalization, weighting = self.get_fold_unfold(x, ks, stride, df=df)
-                z = unfold(x)  # (bn, nc * prod(**ks), L)
-                # Reshape to img shape
-                z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
-
-                output_list = [self.first_stage_model.encode(z[:, :, :, :, i])
-                               for i in range(z.shape[-1])]
-
-                o = torch.stack(output_list, axis=-1)
-                o = o * weighting
-
-                # Reverse reshape to img shape
-                o = o.view((o.shape[0], -1, o.shape[-1]))  # (bn, nc * ks[0] * ks[1], L)
-                # stitch crops together
-                decoded = fold(o)
-                decoded = decoded / normalization
-                return decoded
-
-            else:
-                return self.first_stage_model.encode(x)
-        else:
+        if (
+            not hasattr(self, "split_input_params")
+            or not self.split_input_params["patch_distributed_vq"]
+        ):
             return self.first_stage_model.encode(x)
+        ks = self.split_input_params["ks"]  # eg. (128, 128)
+        stride = self.split_input_params["stride"]  # eg. (64, 64)
+        df = self.split_input_params["vqf"]
+        self.split_input_params['original_image_size'] = x.shape[-2:]
+        bs, nc, h, w = x.shape
+        if ks[0] > h or ks[1] > w:
+            ks = (min(ks[0], h), min(ks[1], w))
+            print("reducing Kernel")
+
+        if stride[0] > h or stride[1] > w:
+            stride = (min(stride[0], h), min(stride[1], w))
+            print("reducing stride")
+
+        fold, unfold, normalization, weighting = self.get_fold_unfold(x, ks, stride, df=df)
+        z = unfold(x)  # (bn, nc * prod(**ks), L)
+        # Reshape to img shape
+        z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
+
+        output_list = [self.first_stage_model.encode(z[:, :, :, :, i])
+                       for i in range(z.shape[-1])]
+
+        o = torch.stack(output_list, axis=-1)
+        o = o * weighting
+
+        # Reverse reshape to img shape
+        o = o.view((o.shape[0], -1, o.shape[-1]))  # (bn, nc * ks[0] * ks[1], L)
+        # stitch crops together
+        decoded = fold(o)
+        decoded = decoded / normalization
+        return decoded
 
 
 class CondStage(DDPM):
@@ -270,25 +261,25 @@ class CondStage(DDPM):
             self.restarted_from_ckpt = True
 
     def instantiate_cond_stage(self, config):
-        if not self.cond_stage_trainable:
-            if config == "__is_first_stage__":
-                print("Using first stage also as cond stage.")
-                self.cond_stage_model = self.first_stage_model
-            elif config == "__is_unconditional__":
-                print(f"Training {self.__class__.__name__} as an unconditional model.")
-                self.cond_stage_model = None
-                # self.be_unconditional = True
-            else:
-                model = instantiate_from_config(config)
-                self.cond_stage_model = model.eval()
-                self.cond_stage_model.train = disabled_train
-                for param in self.cond_stage_model.parameters():
-                    param.requires_grad = False
-        else:
+        if self.cond_stage_trainable:
             assert config != '__is_first_stage__'
             assert config != '__is_unconditional__'
             model = instantiate_from_config(config)
             self.cond_stage_model = model
+
+        elif config == "__is_first_stage__":
+            print("Using first stage also as cond stage.")
+            self.cond_stage_model = self.first_stage_model
+        elif config == "__is_unconditional__":
+            print(f"Training {self.__class__.__name__} as an unconditional model.")
+            self.cond_stage_model = None
+            # self.be_unconditional = True
+        else:
+            model = instantiate_from_config(config)
+            self.cond_stage_model = model.eval()
+            self.cond_stage_model.train = disabled_train
+            for param in self.cond_stage_model.parameters():
+                param.requires_grad = False
 
     def get_learned_conditioning(self, c):
         if self.cond_stage_forward is None:
@@ -309,8 +300,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.diffusion_model = instantiate_from_config(diff_model_config)
 
     def forward(self, x, t, cc):
-        out = self.diffusion_model(x, t, context=cc)
-        return out
+        return self.diffusion_model(x, t, context=cc)
 
 class DiffusionWrapperOut(pl.LightningModule):
     def __init__(self, diff_model_config):
@@ -399,9 +389,9 @@ class UNet(DDPM):
             self.model1.to(self.cdevice)
 
         step = self.unet_bs
-        h,emb,hs = self.model1(x_noisy[0:step], t[:step], cond[:step])
+        h,emb,hs = self.model1(x_noisy[:step], t[:step], cond[:step])
         bs = cond.shape[0]
-        
+
         # assert bs%2 == 0
         lenhs = len(hs)
 
@@ -411,12 +401,12 @@ class UNet(DDPM):
             emb = torch.cat((emb,emb_temp))
             for j in range(lenhs):
                 hs[j] = torch.cat((hs[j], hs_temp[j]))
-        
+
 
         if(not self.turbo):
             self.model1.to("cpu")
             self.model2.to(self.cdevice)
-        
+
         hs_temp = [hs[j][:step] for j in range(lenhs)]
         x_recon = self.model2(h[:step],emb[:step],x_noisy.dtype,hs_temp,cond[:step])
 
@@ -429,16 +419,14 @@ class UNet(DDPM):
         if(not self.turbo):
             self.model2.to("cpu")
 
-        if isinstance(x_recon, tuple) and not return_ids:
-            return x_recon[0]
-        else:
-            return x_recon
+        return x_recon[0] if isinstance(x_recon, tuple) and not return_ids else x_recon
 
     def register_buffer1(self, name, attr):
-            if type(attr) == torch.Tensor:
-                if attr.device != torch.device(self.cdevice):
-                    attr = attr.to(torch.device(self.cdevice))
-            setattr(self, name, attr)
+        if type(attr) == torch.Tensor and attr.device != torch.device(
+            self.cdevice
+        ):
+            attr = attr.to(torch.device(self.cdevice))
+        setattr(self, name, attr)
 
     def make_schedule(self, ddim_num_steps, ddim_discretize="uniform", ddim_eta=0., verbose=True):
 
@@ -729,11 +717,8 @@ class UNet(DDPM):
             x_dec = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
-        
-        if mask is not None:
-            return x0 * mask + (1. - mask) * x_dec
 
-        return x_dec
+        return x0 * mask + (1. - mask) * x_dec if mask is not None else x_dec
 
 
     @torch.no_grad()

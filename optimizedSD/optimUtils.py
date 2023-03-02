@@ -20,11 +20,8 @@ def split_weighted_subprompts(text):
             remaining -= idx
             # remove from main text
             text = text[idx+1:]
-            # find value for weight 
-            if " " in text:
-                idx = text.index(" ") # first occurence
-            else: # no space, read to end
-                idx = len(text)
+            # find value for weight
+            idx = text.index(" ") if " " in text else len(text)
             if idx != 0:
                 try:
                     weight = float(text[:idx])
@@ -60,14 +57,8 @@ def logger(params, log_csv):
             df[arg] = ""
     df.to_csv(log_csv, index = False)
 
-    li = {}
-    cols = [col for col in df.columns]
-    data = {arg:value for arg, value in params.items()}
-    for col in cols:
-        if col in data:
-            li[col] = data[col]
-        else:
-            li[col] = ''
-
+    cols = list(df.columns)
+    data = dict(params.items())
+    li = {col: data.get(col, '') for col in cols}
     df = pd.DataFrame(li,index = [0])
     df.to_csv(log_csv,index=False, mode='a', header=False)
