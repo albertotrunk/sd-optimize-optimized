@@ -548,14 +548,20 @@ class UNetModel(nn.Module):
                         #num_heads = 1
                         dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
                     layers.append(
-                        AttentionBlock(
+                        SpatialTransformer(
+                            ch,
+                            num_heads,
+                            dim_head,
+                            depth=transformer_depth,
+                            context_dim=context_dim,
+                        )
+                        if use_spatial_transformer
+                        else AttentionBlock(
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
-                        ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -603,15 +609,21 @@ class UNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            AttentionBlock(
+            SpatialTransformer(
+                ch,
+                num_heads,
+                dim_head,
+                depth=transformer_depth,
+                context_dim=context_dim,
+            )
+            if use_spatial_transformer
+            else AttentionBlock(
                 ch,
                 use_checkpoint=use_checkpoint,
                 num_heads=num_heads,
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
-            ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
-                        ),
+            ),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -649,14 +661,20 @@ class UNetModel(nn.Module):
                         #num_heads = 1
                         dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
                     layers.append(
-                        AttentionBlock(
+                        SpatialTransformer(
+                            ch,
+                            num_heads,
+                            dim_head,
+                            depth=transformer_depth,
+                            context_dim=context_dim,
+                        )
+                        if use_spatial_transformer
+                        else AttentionBlock(
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
-                        ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         )
                     )
                 if level and i == num_res_blocks:
@@ -736,10 +754,7 @@ class UNetModel(nn.Module):
             h = th.cat([h, hs.pop()], dim=1)
             h = module(h, emb, context)
         h = h.type(x.dtype)
-        if self.predict_codebook_ids:
-            return self.id_predictor(h)
-        else:
-            return self.out(h)
+        return self.id_predictor(h) if self.predict_codebook_ids else self.out(h)
 
 
 class EncoderUNetModel(nn.Module):
@@ -954,8 +969,8 @@ class EncoderUNetModel(nn.Module):
         if self.pool.startswith("spatial"):
             results.append(h.type(x.dtype).mean(dim=(2, 3)))
             h = th.cat(results, axis=-1)
-            return self.out(h)
         else:
             h = h.type(x.dtype)
-            return self.out(h)
+
+        return self.out(h)
 

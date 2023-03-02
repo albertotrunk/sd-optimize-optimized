@@ -38,8 +38,7 @@ def load_model_from_config(ckpt, verbose=False):
     pl_sd = torch.load(ckpt, map_location="cpu")
     if "global_step" in pl_sd:
         print(f"Global Step: {pl_sd['global_step']}")
-    sd = pl_sd["state_dict"]
-    return sd
+    return pl_sd["state_dict"]
 
 
 def load_img(image, h0, w0):
@@ -146,7 +145,7 @@ def generate(
     else:
         image['mask']=mask_image
         mask = load_mask(mask_image, Height, Width, init_latent.shape[2], init_latent.shape[3], True).to(device)
-    
+
     mask = mask[0][0].unsqueeze(0).repeat(4, 1, 1).unsqueeze(0)
     mask = repeat(mask, '1 ... -> b ...', b=batch_size)
 
@@ -163,15 +162,15 @@ def generate(
     t_enc = int(strength * ddim_steps)
     print(f"target t_enc is {t_enc} steps")
 
-    if full_precision == False and device != "cpu":
-        precision_scope = autocast
-    else:
-        precision_scope = nullcontext
-
     all_samples = []
     seeds = ""
+    precision_scope = (
+        autocast
+        if full_precision == False and device != "cpu"
+        else nullcontext
+    )
     with torch.no_grad():
-        all_samples = list()
+        all_samples = []
         for _ in trange(n_iter, desc="Sampling"):
             for prompts in tqdm(data, desc="data"):
                 with precision_scope("cuda"):
@@ -226,9 +225,13 @@ def generate(
                         all_samples.append(x_sample.to("cpu"))
                         x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
                         Image.fromarray(x_sample.astype(np.uint8)).save(
-                            os.path.join(sample_path, "seed_" + str(seed) + "_" + f"{base_count:05}.{img_format}")
+                            os.path.join(
+                                sample_path,
+                                f"seed_{str(seed)}_"
+                                + f"{base_count:05}.{img_format}",
+                            )
                         )
-                        seeds += str(seed) + ","
+                        seeds += f"{str(seed)},"
                         seed += 1
                         base_count += 1
 
@@ -251,12 +254,11 @@ def generate(
     grid = 255.0 * rearrange(grid, "c h w -> h w c").cpu().numpy()
 
     txt = (
-            "Samples finished in "
-            + str(round(time_taken, 3))
-            + " minutes and exported to \n"
-            + sample_path
-            + "\nSeeds used = "
-            + seeds[:-1]
+        f"Samples finished in {str(round(time_taken, 3))}"
+        + " minutes and exported to \n"
+        + sample_path
+        + "\nSeeds used = "
+        + seeds[:-1]
     )
     return Image.fromarray(grid.astype(np.uint8)), image['mask'], txt
 
@@ -273,18 +275,18 @@ if __name__ == '__main__':
     for key, v_ in sd.items():
         sp = key.split(".")
         if (sp[0]) == "model":
-            if "input_blocks" in sp:
-                li.append(key)
-            elif "middle_block" in sp:
-                li.append(key)
-            elif "time_embed" in sp:
+            if (
+                "input_blocks" in sp
+                or "middle_block" in sp
+                or "time_embed" in sp
+            ):
                 li.append(key)
             else:
                 lo.append(key)
     for key in li:
-        sd["model1." + key[6:]] = sd.pop(key)
+        sd[f"model1.{key[6:]}"] = sd.pop(key)
     for key in lo:
-        sd["model2." + key[6:]] = sd.pop(key)
+        sd[f"model2.{key[6:]}"] = sd.pop(key)
 
     config = OmegaConf.load(f"{config}")
 

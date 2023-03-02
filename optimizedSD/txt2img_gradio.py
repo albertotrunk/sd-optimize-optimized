@@ -38,8 +38,7 @@ def load_model_from_config(ckpt, verbose=False):
     pl_sd = torch.load(ckpt, map_location="cpu")
     if "global_step" in pl_sd:
         print(f"Global Step: {pl_sd['global_step']}")
-    sd = pl_sd["state_dict"]
-    return sd
+    return pl_sd["state_dict"]
 
 config = "optimizedSD/v1-inference.yaml"
 ckpt = "models/ldm/stable-diffusion-v1/model.ckpt"
@@ -48,11 +47,7 @@ li, lo = [], []
 for key, v_ in sd.items():
     sp = key.split(".")
     if (sp[0]) == "model":
-        if "input_blocks" in sp:
-            li.append(key)
-        elif "middle_block" in sp:
-            li.append(key)
-        elif "time_embed" in sp:
+        if "input_blocks" in sp or "middle_block" in sp or "time_embed" in sp:
             li.append(key)
         else:
             lo.append(key)
@@ -122,21 +117,21 @@ def generate(
     sample_path = os.path.join(outpath, "_".join(re.split(":| ", prompt)))[:150]
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
-    
+
     # n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
     assert prompt is not None
     data = [batch_size * [prompt]]
 
-    if full_precision == False and device != "cpu":
-        precision_scope = autocast
-    else:
-        precision_scope = nullcontext
-
     all_samples = []
     seeds = ""
+    precision_scope = (
+        autocast
+        if full_precision == False and device != "cpu"
+        else nullcontext
+    )
     with torch.no_grad():
 
-        all_samples = list()
+        all_samples = []
         for _ in trange(n_iter, desc="Sampling"):
             for prompts in tqdm(data, desc="data"):
                 with precision_scope("cuda"):
@@ -190,9 +185,13 @@ def generate(
                         all_samples.append(x_sample.to("cpu"))
                         x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
                         Image.fromarray(x_sample.astype(np.uint8)).save(
-                            os.path.join(sample_path, "seed_" + str(seed) + "_" + f"{base_count:05}.{img_format}")
+                            os.path.join(
+                                sample_path,
+                                f"seed_{str(seed)}_"
+                                + f"{base_count:05}.{img_format}",
+                            )
                         )
-                        seeds += str(seed) + ","
+                        seeds += f"{str(seed)},"
                         seed += 1
                         base_count += 1
 
@@ -215,9 +214,7 @@ def generate(
     grid = 255.0 * rearrange(grid, "c h w -> h w c").cpu().numpy()
 
     txt = (
-        "Samples finished in "
-        + str(round(time_taken, 3))
-        + " minutes and exported to "
+        f"Samples finished in {str(round(time_taken, 3))} minutes and exported to "
         + sample_path
         + "\nSeeds used = "
         + seeds[:-1]

@@ -204,7 +204,6 @@ def main():
 
     if opt.plms:
         raise NotImplementedError("PLMS sampler not (yet) supported")
-        sampler = PLMSSampler(model)
     else:
         sampler = DDIMSampler(model)
 
@@ -245,8 +244,8 @@ def main():
         with precision_scope("cuda"):
             with model.ema_scope():
                 tic = time.time()
-                all_samples = list()
-                for n in trange(opt.n_iter, desc="Sampling"):
+                all_samples = []
+                for _ in trange(opt.n_iter, desc="Sampling"):
                     for prompts in tqdm(data, desc="data"):
                         uc = None
                         if opt.scale != 1.0:

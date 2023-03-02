@@ -20,13 +20,13 @@ from ldm.modules.image_degradation import degradation_fn_bsr, degradation_fn_bsr
 def synset2idx(path_to_yaml="data/index_synset.yaml"):
     with open(path_to_yaml) as f:
         di2s = yaml.load(f)
-    return dict((v,k) for k,v in di2s.items())
+    return {v: k for k,v in di2s.items()}
 
 
 class ImageNetBase(Dataset):
     def __init__(self, config=None):
         self.config = config or OmegaConf.create()
-        if not type(self.config)==dict:
+        if type(self.config) != dict:
             self.config = OmegaConf.to_container(self.config)
         self.keep_orig_class_label = self.config.get("keep_orig_class_label", False)
         self.process_images = True  # if False we skip loading & processing images and self.data contains filepaths
@@ -46,46 +46,45 @@ class ImageNetBase(Dataset):
         raise NotImplementedError()
 
     def _filter_relpaths(self, relpaths):
-        ignore = set([
-            "n06596364_9591.JPEG",
-        ])
-        relpaths = [rpath for rpath in relpaths if not rpath.split("/")[-1] in ignore]
-        if "sub_indices" in self.config:
-            indices = str_to_indices(self.config["sub_indices"])
-            synsets = give_synsets_from_indices(indices, path_to_yaml=self.idx2syn)  # returns a list of strings
-            self.synset2idx = synset2idx(path_to_yaml=self.idx2syn)
-            files = []
-            for rpath in relpaths:
-                syn = rpath.split("/")[0]
-                if syn in synsets:
-                    files.append(rpath)
-            return files
-        else:
+        ignore = {"n06596364_9591.JPEG"}
+        relpaths = [rpath for rpath in relpaths if rpath.split("/")[-1] not in ignore]
+        if "sub_indices" not in self.config:
             return relpaths
+        indices = str_to_indices(self.config["sub_indices"])
+        synsets = give_synsets_from_indices(indices, path_to_yaml=self.idx2syn)  # returns a list of strings
+        self.synset2idx = synset2idx(path_to_yaml=self.idx2syn)
+        files = []
+        for rpath in relpaths:
+            syn = rpath.split("/")[0]
+            if syn in synsets:
+                files.append(rpath)
+        return files
 
     def _prepare_synset_to_human(self):
         SIZE = 2655750
-        URL = "https://heibox.uni-heidelberg.de/f/9f28e956cd304264bb82/?dl=1"
         self.human_dict = os.path.join(self.root, "synset_human.txt")
-        if (not os.path.exists(self.human_dict) or
-                not os.path.getsize(self.human_dict)==SIZE):
+        if (
+            not os.path.exists(self.human_dict)
+            or os.path.getsize(self.human_dict) != SIZE
+        ):
+            URL = "https://heibox.uni-heidelberg.de/f/9f28e956cd304264bb82/?dl=1"
             download(URL, self.human_dict)
 
     def _prepare_idx_to_synset(self):
-        URL = "https://heibox.uni-heidelberg.de/f/d835d5b6ceda4d3aa910/?dl=1"
         self.idx2syn = os.path.join(self.root, "index_synset.yaml")
         if (not os.path.exists(self.idx2syn)):
+            URL = "https://heibox.uni-heidelberg.de/f/d835d5b6ceda4d3aa910/?dl=1"
             download(URL, self.idx2syn)
 
     def _prepare_human_to_integer_label(self):
-        URL = "https://heibox.uni-heidelberg.de/f/2362b797d5be43b883f6/?dl=1"
         self.human2integer = os.path.join(self.root, "imagenet1000_clsidx_to_labels.txt")
         if (not os.path.exists(self.human2integer)):
+            URL = "https://heibox.uni-heidelberg.de/f/2362b797d5be43b883f6/?dl=1"
             download(URL, self.human2integer)
         with open(self.human2integer, "r") as f:
             lines = f.read().splitlines()
             assert len(lines) == 1000
-            self.human2integer_dict = dict()
+            self.human2integer_dict = {}
             for line in lines:
                 value, key = line.split(":")
                 self.human2integer_dict[key] = int(value)
@@ -95,18 +94,20 @@ class ImageNetBase(Dataset):
             self.relpaths = f.read().splitlines()
             l1 = len(self.relpaths)
             self.relpaths = self._filter_relpaths(self.relpaths)
-            print("Removed {} files from filelist during filtering.".format(l1 - len(self.relpaths)))
+            print(
+                f"Removed {l1 - len(self.relpaths)} files from filelist during filtering."
+            )
 
         self.synsets = [p.split("/")[0] for p in self.relpaths]
         self.abspaths = [os.path.join(self.datadir, p) for p in self.relpaths]
 
         unique_synsets = np.unique(self.synsets)
-        class_dict = dict((synset, i) for i, synset in enumerate(unique_synsets))
-        if not self.keep_orig_class_label:
-            self.class_labels = [class_dict[s] for s in self.synsets]
-        else:
-            self.class_labels = [self.synset2idx[s] for s in self.synsets]
-
+        class_dict = {synset: i for i, synset in enumerate(unique_synsets)}
+        self.class_labels = (
+            [self.synset2idx[s] for s in self.synsets]
+            if self.keep_orig_class_label
+            else [class_dict[s] for s in self.synsets]
+        )
         with open(self.human_dict, "r") as f:
             human_dict = f.read().splitlines()
             human_dict = dict(line.split(maxsplit=1) for line in human_dict)
@@ -161,17 +162,20 @@ class ImageNetTrain(ImageNetBase):
                                     default=True)
         if not tdu.is_prepared(self.root):
             # prep
-            print("Preparing dataset {} in {}".format(self.NAME, self.root))
+            print(f"Preparing dataset {self.NAME} in {self.root}")
 
             datadir = self.datadir
             if not os.path.exists(datadir):
                 path = os.path.join(self.root, self.FILES[0])
-                if not os.path.exists(path) or not os.path.getsize(path)==self.SIZES[0]:
+                if (
+                    not os.path.exists(path)
+                    or os.path.getsize(path) != self.SIZES[0]
+                ):
                     import academictorrents as at
                     atpath = at.get(self.AT_HASH, datastore=self.root)
                     assert atpath == path
 
-                print("Extracting {} to {}".format(path, datadir))
+                print(f"Extracting {path} to {datadir}")
                 os.makedirs(datadir, exist_ok=True)
                 with tarfile.open(path, "r:") as tar:
                     tar.extractall(path=datadir)
@@ -226,23 +230,29 @@ class ImageNetValidation(ImageNetBase):
                                     default=False)
         if not tdu.is_prepared(self.root):
             # prep
-            print("Preparing dataset {} in {}".format(self.NAME, self.root))
+            print(f"Preparing dataset {self.NAME} in {self.root}")
 
             datadir = self.datadir
             if not os.path.exists(datadir):
                 path = os.path.join(self.root, self.FILES[0])
-                if not os.path.exists(path) or not os.path.getsize(path)==self.SIZES[0]:
+                if (
+                    not os.path.exists(path)
+                    or os.path.getsize(path) != self.SIZES[0]
+                ):
                     import academictorrents as at
                     atpath = at.get(self.AT_HASH, datastore=self.root)
                     assert atpath == path
 
-                print("Extracting {} to {}".format(path, datadir))
+                print(f"Extracting {path} to {datadir}")
                 os.makedirs(datadir, exist_ok=True)
                 with tarfile.open(path, "r:") as tar:
                     tar.extractall(path=datadir)
 
                 vspath = os.path.join(self.root, self.FILES[1])
-                if not os.path.exists(vspath) or not os.path.getsize(vspath)==self.SIZES[1]:
+                if (
+                    not os.path.exists(vspath)
+                    or os.path.getsize(vspath) != self.SIZES[1]
+                ):
                     download(self.VS_URL, vspath)
 
                 with open(vspath, "r") as f:
@@ -340,7 +350,7 @@ class ImageNetSR(Dataset):
         example = self.base[i]
         image = Image.open(example["file_path_"])
 
-        if not image.mode == "RGB":
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
         image = np.array(image).astype(np.uint8)
